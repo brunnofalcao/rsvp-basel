@@ -588,8 +588,8 @@
             <rect x="27" y="18" width="10" height="28" fill="#EDE7DA"/>
             <rect x="18" y="27" width="28" height="10" fill="#EDE7DA"/>
           </svg>
-          <h3 id="doneTitle">Sua confirmação está pronta no WhatsApp</h3>
-          <p id="doneText">Se a janela do WhatsApp não abriu, toque no botão abaixo. Você também pode enviar a mesma confirmação por e-mail.</p>
+          <h3 id="doneTitle">Confirmação enviada</h3>
+          <p id="doneText">Sua resposta foi registrada. O WhatsApp abre com a mesma confirmação para você falar direto com o Brunno; se não abriu, toque no botão abaixo. Você também pode enviar por e-mail.</p>
           <div class="actions">
             <a class="btn" id="waAgain" href="#" target="_blank" rel="noopener">Abrir no WhatsApp</a>
             <a class="btn btn-ghost" id="mailAgain" href="#">Enviar por e-mail</a>
@@ -630,18 +630,14 @@
 </div>
 
 <script>
-  // URL do App da Web (Apps Script) que grava as confirmações na aba RSVP da planilha da Missão.
-  // Cole aqui a URL que termina em /exec. Vazio = a confirmação segue só pelo WhatsApp.
-  const RSVP_ENDPOINT = "";
+  // Cada confirmação é gravada na tabela rsvp_basel (Supabase · projeto do site da Science Play)
+  // e, em seguida, o WhatsApp abre com a mesma mensagem para o Brunno.
+  const SUPABASE_URL = "https://bdwvyvtsnfvmikrzsavb.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_357dnuOfFNt0Fmh63VpABQ_izl6wghY"; // chave pública: só permite inserir nesta tabela
   const WHATSAPP = "5561981382900";
   const EMAIL = "falcao@scienceplay.com";
 
   const form = document.getElementById("rsvpForm");
-  if (RSVP_ENDPOINT) {
-    document.getElementById("submitLabel").textContent = "Enviar confirmação";
-    document.getElementById("submitIcon").style.display = "none";
-    document.getElementById("formNote").textContent = "Sua confirmação é registrada na hora e o Brunno recebe o aviso. Seus dados são usados apenas para a organização da comitiva.";
-  }
   const done = document.getElementById("done");
   const detalhes = document.getElementById("detalhes");
   const acompField = document.getElementById("acompField");
@@ -737,31 +733,37 @@
     done.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  form.addEventListener("submit", async (e) => {
+  // Grava a confirmação no banco em segundo plano (keepalive: continua mesmo se a página for para o
+  // WhatsApp logo em seguida). O WhatsApp segue como canal paralelo; nada depende da gravação.
+  let saving = null;
+  function saveRsvp(p, canal) {
+    if (saving) return saving;
+    const row = {
+      nome: p.nome, empresa: p.empresa, cargo: p.cargo, email: p.email, whatsapp: p.whatsapp,
+      presenca: p.presenca, coquetel: p.coquetel || null, acompanhante: p.acompanhante || null,
+      observacoes: p.observacoes || null,
+      origem: location.hostname + " · " + canal,
+      user_agent: (navigator.userAgent || "").slice(0, 300)
+    };
+    saving = fetch(SUPABASE_URL + "/rest/v1/rsvp_basel", {
+      method: "POST",
+      keepalive: true,
+      headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json", "Prefer": "return=minimal" },
+      body: JSON.stringify(row)
+    }).then((r) => {
+      if (!r.ok) throw new Error("status " + r.status);
+      const t = document.getElementById("doneTitle");
+      if (t) t.textContent = "Confirmação registrada";
+      return true;
+    }).catch(() => { saving = null; return false; });
+    return saving;
+  }
+
+  form.addEventListener("submit", (e) => {
     e.preventDefault();
     if (!validate()) return;
     const p = payload();
-    if (RSVP_ENDPOINT) {
-      const btn = document.getElementById("submitBtn");
-      const label = document.getElementById("submitLabel");
-      const prev = label.textContent;
-      btn.disabled = true; label.textContent = "Enviando…";
-      try {
-        // Corpo em texto simples (sem cabeçalho JSON) para o Apps Script aceitar sem preflight
-        const r = await fetch(RSVP_ENDPOINT, { method: "POST", body: JSON.stringify(p) });
-        let ok = r.type === "opaque" || r.ok;
-        if (ok && r.type !== "opaque") {
-          const j = await r.json().catch(() => ({}));
-          if (j.ok === false) ok = false;
-        }
-        if (!ok) throw new Error("falha ao gravar");
-        showDone(p, "Confirmação recebida", "Obrigado. Sua resposta foi registrada e o Brunno retorna pessoalmente em breve. Se quiser adiantar a conversa, fale com ele pelo WhatsApp.");
-        return;
-      } catch (err) {
-        btn.disabled = false; label.textContent = prev;
-      }
-    }
-    // Sem endpoint (ou se a gravação falhar): a confirmação segue pelo WhatsApp
+    saveRsvp(p, "whatsapp");
     showDone(p);
     const win = window.open(waUrl(p), "_blank", "noopener");
     if (!win) window.location.href = waUrl(p);
@@ -784,6 +786,7 @@
     e.preventDefault();
     if (!validate()) return;
     const p = payload();
+    saveRsvp(p, "email");
     window.location.href = mailUrl(p);
     showDone(p, "Sua confirmação está pronta no e-mail", "Se o aplicativo de e-mail não abriu, toque em enviar por e-mail abaixo. Você também pode confirmar pelo WhatsApp.");
   });
